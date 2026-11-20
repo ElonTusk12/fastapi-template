@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException, Path as PathParameter
+from fastapi import Depends, FastAPI, HTTPException, Path as PathParameter, Query, Response
 from sqlalchemy import URL, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -13,6 +13,7 @@ from models import Task
 from schemas import TaskCreate, TaskResponse, TaskUpdate
 
 TaskId = Annotated[int, PathParameter(gt=0)]
+TaskLimit = Annotated[int, Query(ge=1, le=100)]
 
 
 def create_app(database_path: Path | None = None) -> FastAPI:
@@ -40,13 +41,26 @@ def create_app(database_path: Path | None = None) -> FastAPI:
     async def task_list(
         session: AsyncSession = Depends(get_session),
         done: bool | None = None,
+        limit: TaskLimit | None = None,
     ):
         """Все задачи или выборка по признаку выполнения. Новые задачи сверху."""
         statement = select(Task).order_by(Task.id.desc())
         if done is not None:
             statement = statement.where(Task.done == done)
+        if limit is not None:
+            statement = statement.limit(limit)
         result = await session.execute(statement)
         return result.scalars().all()
+
+    @app.get("/tasks/{task_id}", response_model=TaskResponse, tags=["Задачи"])
+    async def task_get(
+        task_id: TaskId,
+        session: AsyncSession = Depends(get_session),
+    ):
+        task = await session.get(Task, task_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="Задача не найдена")
+        return task
 
     @app.post("/tasks", response_model=TaskResponse, status_code=201, tags=["Задачи"])
     async def task_create(
@@ -75,6 +89,18 @@ def create_app(database_path: Path | None = None) -> FastAPI:
         await session.commit()
         await session.refresh(saved_task)
         return saved_task
+    
+    @app.delete("/tasks/{task_id}", status_code=204, tags=["Задачи"])
+    async def task_delete(
+        task_id: TaskId,
+        session: AsyncSession = Depends(get_session),
+    ):
+        task = await session.get(Task, task_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="Задача не найдена")
+        await session.delete(task)
+        await session.commit()
+        return Response(status_code=204)
 
     return app
 

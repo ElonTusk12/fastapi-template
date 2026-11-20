@@ -114,3 +114,46 @@ def test_openapi_describes_real_api(client):
     assert "patch" in schema["paths"]["/tasks/{task_id}"]
     assert "TaskCreate" in schema["components"]["schemas"]
     assert client.get("/docs").status_code == 200
+
+def test_get_task_by_id(client):
+    created = client.post("/tasks", json={"title": "turbo test"}).json()
+    response = client.get(f"/tasks/{created['id']}")
+    assert response.status_code == 200
+    assert response.json() == created
+
+
+def test_get_nonexistent_task_returns_404(client):
+    response = client.get("/tasks/6767")
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Задача не найдена"}
+
+
+def test_delete_task_success_and_repeated_returns_404(client):
+    created = client.post("/tasks", json={"title": "удалить потом"}).json()
+    task_id = created["id"]
+
+    delete_response = client.delete(f"/tasks/{task_id}")
+    assert delete_response.status_code == 204
+    assert delete_response.content == b""
+
+    assert client.get("/tasks").json() == []
+    assert client.get(f"/tasks/{task_id}").status_code == 404
+
+    assert client.delete(f"/tasks/{task_id}").status_code == 404
+
+
+def test_delete_nonexistent_task_returns_404(client):
+    response = client.delete("/tasks/6767")
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Задача не найдена"}
+
+
+def test_tasks_limit_parameter(client):
+    for i in range(5):
+        client.post("/tasks", json={"title": f"ефыл{i}"})
+
+    assert len(client.get("/tasks?limit=2").json()) == 2
+    assert len(client.get("/tasks?limit=100").json()) == 5
+    assert client.get("/tasks?limit=0").status_code == 422
+    assert client.get("/tasks?limit=101").status_code == 422
+    assert client.get("/tasks?limit=-5").status_code == 422
